@@ -12,8 +12,6 @@
 -define(PRINT(MSG),io:format("~s:~w " ++ MSG ++ "~n",[?MODULE,?LINE])).
 -define(PRINT(MSG,ARGS),io:format("~s:~w " ++ MSG ++ "~n",[?MODULE,?LINE] ++ ARGS)).
 
--define(IP_DB_DAT_FILE,"./priv/17monipdb.dat").
-
 -export([find/1,find/2]).
 
 -export([test/0,test/1]).
@@ -28,7 +26,7 @@
 %% ---------------------------------------
 
 find(Ip) ->
-    find(Ip,?IP_DB_DAT_FILE).
+    find(Ip, filename:join(code:priv_dir(erlang_ip), "17monipdb.dat")).
 
 find(Ip,DbFile) ->
 
