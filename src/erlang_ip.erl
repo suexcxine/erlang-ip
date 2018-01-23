@@ -9,27 +9,45 @@
 
 -include_lib("kernel/include/inet.hrl").
 
--define(PRINT(MSG),io:format("~s:~w " ++ MSG ++ "~n",[?MODULE,?LINE])).
--define(PRINT(MSG,ARGS),io:format("~s:~w " ++ MSG ++ "~n",[?MODULE,?LINE] ++ ARGS)).
-
--export([find/1,find/2]).
-
--export([test/0,test/1]).
+-export([load/0, find/1]).
 
 %% ------------- DAT struct --------------
 %%
 %% | 4 bytes 数据长度 DataOffset |
 %% | 256 * 4 ip首位对应的数据偏移 |
-%% | DataOffset * 8 (4 bytes Ip, 3 bypes offSet, 1 byte data len) |
+%% | DataOffset * 8 (4 bytes Ip, 3 bytes offset, 1 byte data len) |
 %% | Data Address Info |
 %%
 %% ---------------------------------------
 
-find(Ip) ->
-    find(Ip, filename:join(code:priv_dir(erlang_ip), "17monipdb.dat")).
+load() ->
+    DbFile = filename:join(code:priv_dir(erlang_ip), "17monipdb.dat"),
+    {ok,FileBin} = file:read_file(DbFile),
+    catch ets:new(erlang_ip_file, [named_table, public, {read_concurrency, true}]),
+    ets:insert(erlang_ip_file, {filebin, FileBin}),
+    catch ets:new(erlang_ip_cache, [named_table, public]),
+    ok.
 
-find(Ip,DbFile) ->
+find(Ip) when is_list(Ip) ->
+    IpBin = iolist_to_binary(Ip),
+    case ets:lookup(erlang_ip_cache, IpBin) of
+        [{_, Result}] -> Result;
+        _ ->
+            case ets:lookup(erlang_ip_file, filebin) of
+                [{_, FileBin}] ->
+                    Result = case do_find(Ip, FileBin) of
+                        false -> <<>>;
+                        {ok, Address} -> Address
+                    end,
+                    ets:insert(erlang_ip_cache, {IpBin, Result}),
+                    Result;
+                _ -> {error, ip_database_not_loaded}
+            end
+    end;
+find(Ip) when is_binary(Ip) ->
+    find(binary_to_list(Ip)).
 
+do_find(Ip, FileBin) when is_binary(FileBin) ->
     {ok,#hostent{h_addr_list = [_Ip |_]}} =  inet:gethostbyname(Ip),
     Ip2 = inet:ntoa(_Ip),
 
@@ -37,8 +55,6 @@ find(Ip,DbFile) ->
     LongIp = ntohl(IdList),
     FirstIp = to_integer(FirstIpStr),
 
-
-    {ok,FileBin} = file:read_file(DbFile),
     <<OffsetLen:32,DataBin/binary>> = FileBin,
 
     {_Bin1,Bin2} = erlang:split_binary(DataBin,FirstIp * 4),
@@ -52,7 +68,6 @@ find(Ip,DbFile) ->
     %% 截取区间内的数据
     {Bin3,_Bin4} = erlang:split_binary(FileBin,MaxOffSet2),
     {_Bin5,Bin6} = erlang:split_binary(Bin3, 1024 + 4 + MinOffset * 8),
-    % ?PRINT("MinOffset:~w,MaxOffSet:~w,Diff:~w",[MinOffset,MaxOffSet,MaxOffSet - MinOffset]),
     case find_data_index(Bin6,LongIp) of
         {ok,DataOffset,DataLen} ->
             {_Bin7,Bin8} = erlang:split_binary(FileBin,OffsetLen + DataOffset - 1024),
@@ -89,17 +104,7 @@ find_data_index2(_Bin,_LongIp) -> false.
 ntohl([A,B,C,D]) ->
     (to_integer(A) bsl 24) + (to_integer(B) bsl 16) + (to_integer(C) bsl 8) + to_integer(D).
 
-
 to_integer(Val) when is_integer(Val) -> Val;
 to_integer(Val) when is_binary(Val) -> binary_to_integer(Val);
 to_integer(Val) when is_list(Val) -> list_to_integer(Val).
 
-test() ->
-    test("115.29.161.118").
-test(Ip) ->
-    case find(Ip) of
-        {ok,Bin} ->
-            ?PRINT("Ip:~s -> ~ts",[Ip,Bin]);
-        false ->
-            ?PRINT("Ip:~w N/A", [Ip])
-    end.
